@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 const (
 	envVarGitBackupDir              = "GIT_BACKUP_DIR"
 	envVarGitHostsLog               = "GITHOSTS_LOG"
+	envVarGitCommandTimeout         = "GIT_COMMAND_TIMEOUT"
 	refsMethod                      = "refs"
 	cloneMethod                     = "clone"
 	defaultRemoteMethod             = cloneMethod
@@ -199,6 +201,7 @@ func getRemoteRefs(ctx context.Context, cloneURL string) (refs gitRefs, err erro
 	// --refs ignores pseudo-refs like HEAD and FETCH_HEAD, and also peeled tags that reference other objects
 	// this enables comparison with refs from existing bundles
 	remoteHeadsCmd := exec.CommandContext(ctx, "git", "ls-remote", "--refs", cloneURL)
+	remoteHeadsCmd.WaitDelay = commandWaitDelay
 
 	out, err := remoteHeadsCmd.CombinedOutput()
 	if err != nil {
@@ -244,16 +247,38 @@ type processBackupInput struct {
 	BackupLFS            bool
 	Secrets              []string
 	EncryptionPassphrase string        // Optional passphrase for age encryption
-	Timeout              time.Duration // Optional timeout for git operations, defaults to 10 minutes
+	Timeout              time.Duration // Optional timeout for git operations, defaults to gitCommandTimeout()
 }
 
 const defaultCommandTimeout = 10 * time.Minute
 
+// commandWaitDelay bounds how long a git command may keep its output pipes
+// open after its context expires. Killing git does not kill its helpers
+// (git-remote-http(s), and on Windows the real git.exe behind the
+// Git\cmd\git.exe launcher), which inherit the pipes and keep a stalled
+// transfer alive; without a WaitDelay, CombinedOutput then never returns.
+const commandWaitDelay = 10 * time.Second
+
+// gitCommandTimeout returns the time budget for all git operations of a
+// single repository backup (ls-remote, clone, bundle, LFS fetch), honouring
+// the GIT_COMMAND_TIMEOUT env var (in seconds) and falling back to
+// defaultCommandTimeout. Non-positive or unparsable values are ignored so a
+// misconfiguration cannot disable the timeout.
+func gitCommandTimeout() time.Duration {
+	if v := os.Getenv(envVarGitCommandTimeout); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+
+	return defaultCommandTimeout
+}
+
 func processBackup(in processBackupInput) errors.E {
 	// Create context with timeout
 	timeout := in.Timeout
-	if timeout == 0 {
-		timeout = defaultCommandTimeout
+	if timeout <= 0 {
+		timeout = gitCommandTimeout()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -281,6 +306,7 @@ func processBackup(in processBackupInput) errors.E {
 		BackupDIR:   in.BackupDIR,
 		LogLevel:    in.LogLevel,
 		Secrets:     in.Secrets,
+		Timeout:     timeout,
 	}); err != nil {
 		return err
 	}
@@ -412,6 +438,7 @@ type cloneRepositoryInput struct {
 	BackupDIR   string
 	LogLevel    int
 	Secrets     []string
+	Timeout     time.Duration // budget Ctx was created with, reported when it expires
 }
 
 func cloneRepository(in cloneRepositoryInput) errors.E {
@@ -430,6 +457,16 @@ func cloneRepository(in cloneRepositoryInput) errors.E {
 
 	cloneOut, cloneErr := cloneCmd.CombinedOutput()
 	if cloneErr != nil {
+		// A killed git reports only "signal: killed" or an exit status, so
+		// check the context to tell a timeout apart from a real git failure.
+		if ctxErr := in.Ctx.Err(); errors.Is(ctxErr, context.DeadlineExceeded) {
+			logger.Printf("cloning %s timed out after %s; set %s (seconds) to allow longer",
+				in.Repo.PathWithNameSpace, in.Timeout, envVarGitCommandTimeout)
+
+			return errors.Wrapf(ctxErr, "cloning failed for repository: %s - timed out after %s (set %s to raise the limit)",
+				in.Repo.Name, in.Timeout, envVarGitCommandTimeout)
+		}
+
 		return handleCloneError(in.Repo, cloneOut, cloneErr, in.CloneURL, in.Secrets)
 	}
 
@@ -451,6 +488,7 @@ func buildCloneCommand(ctx context.Context, cloneURL, workingPath, backupDIR str
 	}
 
 	cloneCmd.Dir = backupDIR
+	cloneCmd.WaitDelay = commandWaitDelay
 
 	return cloneCmd
 }
@@ -577,6 +615,7 @@ func checkForLFSFiles(ctx context.Context, workingPath string) (bool, errors.E) 
 func fetchLFSFiles(ctx context.Context, workingPath string) errors.E {
 	lfsCmd := exec.CommandContext(ctx, "git", "lfs", "fetch", "--all")
 	lfsCmd.Dir = workingPath
+	lfsCmd.WaitDelay = commandWaitDelay
 
 	if out, err := lfsCmd.CombinedOutput(); err != nil {
 		return errors.Errorf("git lfs fetch failed: %s: %s", strings.TrimSpace(string(out)), err)
