@@ -39,9 +39,10 @@ const (
 	AuthTypeBasicAuthHeader   = "basic-auth-header"
 	AuthTypeBearerToken       = "bearer-token"
 	// Worker delay
-	bitbucketEnvVarWorkerDelay   = "BITBUCKET_WORKER_DELAY"
-	bitbucketEnvVarMaxConcurrent = "BITBUCKET_MAX_CONCURRENT"
-	bitbucketDefaultWorkerDelay  = 500
+	bitbucketEnvVarWorkerDelay    = "BITBUCKET_WORKER_DELAY"
+	bitbucketEnvVarMaxConcurrent  = "BITBUCKET_MAX_CONCURRENT"
+	bitbucketDefaultWorkerDelay   = 500
+	bitbucketEnvVarRequestTimeout = "BITBUCKET_REQUEST_TIMEOUT"
 )
 
 type NewBitBucketHostInput struct {
@@ -138,6 +139,20 @@ func NewBitBucketHost(input NewBitBucketHostInput) (*BitbucketHost, error) {
 	return bitbucketHost, nil
 }
 
+// bitbucketRequestTimeout returns the per-request timeout for Bitbucket Request
+// calls, honouring the BITBUCKET_REQUEST_TIMEOUT env var (in seconds) and
+// falling back to defaultHttpRequestTimeout. Non-positive or unparsable
+// values are ignored so a misconfiguration cannot disable the timeout.
+func bitbucketRequestTimeout() time.Duration {
+	if v := os.Getenv(bitbucketEnvVarRequestTimeout); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+
+	return defaultHttpRequestTimeout
+}
+
 func auth(httpClient *retryablehttp.Client, key, secret string) (string, error) {
 	// Disable debug logging to prevent credential exposure
 	httpClient.Logger = log.New(io.Discard, "", 0)
@@ -155,7 +170,7 @@ func auth(httpClient *retryablehttp.Client, key, secret string) (string, error) 
 		basicAuthUser:     key,
 		basicAuthPassword: secret,
 		secrets:           []string{key, secret},
-		timeout:           defaultHttpRequestTimeout,
+		timeout:           bitbucketRequestTimeout(),
 	})
 	if err != nil {
 		return "", errors.Errorf("failed to get bitbucket auth token: %s", err)
@@ -206,7 +221,7 @@ func (bb BitbucketHost) auth(key, secret string) (string, error) {
 		basicAuthUser:     key,
 		basicAuthPassword: secret,
 		secrets:           []string{key, secret},
-		timeout:           defaultHttpRequestTimeout,
+		timeout:           bitbucketRequestTimeout(),
 	})
 	if err != nil {
 		return "", errors.Errorf("failed to get bitbucket auth token: %s", err)
@@ -397,12 +412,13 @@ func (bb BitbucketHost) listWorkspaceProjects(ctx context.Context, workspace, ro
 
 func (bb BitbucketHost) describeRepos() (describeReposOutput, errors.E) {
 	logger.Println("listing BitBucket repositories")
+	timeout := bitbucketRequestTimeout()
 
 	if bb.AuthType != AuthTypeBitbucketOAuth2 && bb.AuthType != AuthTypeBitbucketAPIToken {
 		return describeReposOutput{}, errors.New("no authentication method available - need either OAuth key/secret or API token/email")
 	}
 
-	wsCtx, wsCancel := context.WithTimeout(context.Background(), defaultHttpRequestTimeout)
+	wsCtx, wsCancel := context.WithTimeout(context.Background(), timeout)
 	defer wsCancel()
 
 	workspaces, wsErr := bb.getWorkspaces(wsCtx)
@@ -412,7 +428,7 @@ func (bb BitbucketHost) describeRepos() (describeReposOutput, errors.E) {
 
 	var repos []repository
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultHttpRequestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	for _, workspace := range workspaces {
