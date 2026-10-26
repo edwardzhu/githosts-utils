@@ -384,7 +384,7 @@ func sourcehutWorker(config WorkerConfig, jobs <-chan repository, results chan<-
 			config.SetupRepo(&repo)
 		}
 
-		err := processBackup(processBackupInput{
+		err := processBackupWithRetry(processBackupInput{
 			LogLevel:             config.LogLevel,
 			Repo:                 repo,
 			BackupDIR:            config.BackupDir,

@@ -866,7 +866,7 @@ func giteaWorker(config WorkerConfig, jobs <-chan repository, results chan<- Rep
 			config.SetupRepo(&repo)
 		}
 
-		err := processBackup(processBackupInput{
+		err := processBackupWithRetry(processBackupInput{
 			LogLevel:             config.LogLevel,
 			Repo:                 repo,
 			BackupDIR:            config.BackupDir,

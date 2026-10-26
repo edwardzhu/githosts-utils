@@ -102,7 +102,7 @@ func azureDevOpsWorker(config WorkerConfig, jobs <-chan repository, results chan
 		// Azure DevOps specific: use BasicAuthPass and URLWithToken as secrets
 		secrets := []string{repo.BasicAuthPass, repo.URLWithToken}
 
-		err := processBackup(processBackupInput{
+		err := processBackupWithRetry(processBackupInput{
 			LogLevel:             config.LogLevel,
 			Repo:                 repo,
 			BackupDIR:            config.BackupDir,

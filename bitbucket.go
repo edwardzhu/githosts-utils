@@ -477,7 +477,7 @@ func bitBucketWorker(config WorkerConfig, jobs <-chan repository, results chan<-
 			continue
 		}
 
-		err := processBackup(processBackupInput{
+		err := processBackupWithRetry(processBackupInput{
 			LogLevel:             config.LogLevel,
 			Repo:                 repo,
 			BackupDIR:            config.BackupDir,

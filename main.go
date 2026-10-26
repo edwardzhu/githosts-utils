@@ -88,7 +88,7 @@ func genericWorker(config WorkerConfig, jobs <-chan repository, results chan<- R
 			config.SetupRepo(&repo)
 		}
 
-		err := processBackup(processBackupInput{
+		err := processBackupWithRetry(processBackupInput{
 			LogLevel:             config.LogLevel,
 			Repo:                 repo,
 			BackupDIR:            config.BackupDir,

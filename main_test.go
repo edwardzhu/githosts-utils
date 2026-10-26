@@ -41,6 +41,10 @@ const (
 func TestMain(m *testing.M) {
 	preflight()
 
+	// Tests that expect a backup to fail would otherwise sit through the full
+	// retry backoff.
+	retryBaseDelay = 0
+
 	code := m.Run()
 	os.Exit(code)
 }

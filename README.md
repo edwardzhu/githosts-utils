@@ -160,6 +160,7 @@ The library reads the following variables where relevant:
 - `GIT_BACKUP_DIR` – used by the tests to determine the backup location
 - `BUNDLE_PASSPHRASE` – optional passphrase for encrypting backup bundles
 - `GIT_COMMAND_TIMEOUT` – time limit in seconds for backing up a single repository (clone, bundle and LFS fetch combined), default `600`; raise it for very large repositories or slow networks
+- `GIT_BACKUP_RETRIES` – number of times a failed repository backup is retried before the error is reported, for every provider, default `3`; retries wait 5s, 10s, 15s, … and `0` disables them
 
 Provider-specific tests require credentials through environment variables such as `GITHUB_TOKEN`, `GITLAB_TOKEN`, `BITBUCKET_EMAIL` and `BITBUCKET_API_TOKEN` (or `BITBUCKET_KEY` and `BITBUCKET_SECRET` for OAuth2), `AZURE_DEVOPS_USERNAME`, `AZURE_DEVOPS_PAT`, and `AZURE_DEVOPS_ORGS`, `GITEA_TOKEN` and `GITEA_APIURL`, `CODEBERG_TOKEN`, and `SOURCEHUT_PAT`.
 
